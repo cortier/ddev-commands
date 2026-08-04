@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+
+#ddev-generated
+
+## Description: Open the local project URL
+## Usage: launch [path]
+## Example: "ddev launch"
+
+set -euo pipefail
+
+base_url="$(ddev url | sed -n '1p')"
+target="${1:-}"
+
+if [[ "${target}" == "-h" || "${target}" == "--help" ]]; then
+    echo 'Open the local project URL'
+    echo
+    echo 'Usage: ddev launch [path]'
+    echo
+    echo 'Examples:'
+    echo '  ddev launch'
+    echo '  ddev launch /admin'
+    echo '  ddev launch :8084'
+    exit 0
+elif [[ "${target}" == "-m" || "${target}" == "--mailpit" ]]; then
+    exec ddev mailpit
+elif [ -z "${target}" ]; then
+    url="${base_url}"
+elif [[ "${target}" == http://* || "${target}" == https://* ]]; then
+    url="${target}"
+elif [[ "${target}" == :* ]]; then
+    url="${base_url}${target}"
+elif [[ "${target}" == /* ]]; then
+    url="${base_url}${target}"
+else
+    url="${base_url}/${target}"
+fi
+
+if command -v xdg-open >/dev/null 2>&1; then
+    xdg-open "${url}" >/dev/null 2>&1 &
+elif command -v open >/dev/null 2>&1; then
+    open "${url}"
+elif command -v cmd.exe >/dev/null 2>&1; then
+    cmd.exe /c start "" "${url}"
+else
+    echo "${url}"
+fi

@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+
+#ddev-generated
+
+## Description: Print the project URL for hostnames defined in .ddev/config.host.local.yaml
+## Usage: url [authority]
+## Example: "ddev url" or "ddev url authority"
+
+set -euo pipefail
+
+project_tld="$(awk '/^project_tld:/ {print $2; exit}' .ddev/config.yaml)"
+hostnames="$(sed -n 's/^[[:space:]]*-[[:space:]]*//p' .ddev/config.host.local.yaml)"
+format="${1:-url}"
+
+if [ "${format}" != "url" ] && [ "${format}" != "authority" ]; then
+    echo "Unsupported format: ${format}" >&2
+    exit 1
+fi
+
+if [ -z "${project_tld}" ]; then
+    project_tld="ddev.site"
+fi
+
+if [ -z "${hostnames}" ]; then
+    echo "No additional hostnames found in .ddev/config.host.yaml." >&2
+    exit 1
+fi
+
+while IFS= read -r hostname; do
+    [ -n "${hostname}" ] || continue
+    authority="${hostname}.${project_tld}"
+
+    if [ "${format}" = "authority" ]; then
+        echo "${authority}"
+    else
+        echo "https://${authority}"
+    fi
+done <<< "${hostnames}"

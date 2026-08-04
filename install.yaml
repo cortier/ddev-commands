@@ -1,0 +1,30 @@
+name: ddev-commands
+
+project_files:
+  - commands/host/api
+  - commands/host/app
+  - commands/host/launch
+  - commands/host/name
+  - commands/host/surface
+  - commands/host/url
+
+global_files: []
+
+ddev_version_constraint: '>= v1.24.10'
+
+dependencies: []
+
+pre_install_actions:
+  - |
+    #ddev-description:Create the project URL host configuration
+    if [ ! -f "${DDEV_APPROOT}/.ddev/config.host.local.yaml" ]; then
+      surface_name="${DDEV_PROJECT##*-}"
+      printf 'additional_hostnames:\n    - %s-local\n' "${surface_name}" > "${DDEV_APPROOT}/.ddev/config.host.local.yaml"
+    fi
+
+post_install_actions:
+  - chmod +x commands/host/api commands/host/app commands/host/launch commands/host/name commands/host/surface commands/host/url
+
+removal_actions: []
+
+yaml_read_files: {}

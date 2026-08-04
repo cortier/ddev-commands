@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+
+#ddev-generated
+
+## Description: Print the project name without its final dash-delimited suffix
+## Usage: name
+## Example: "ddev name"
+
+set -euo pipefail
+
+name="$(awk '/^name:[[:space:]]*/ { sub(/^name:[[:space:]]*/, ""); print; exit }' "${DDEV_APPROOT}/.ddev/config.yaml")"
+
+printf '%s\n' "${name%-*}"
