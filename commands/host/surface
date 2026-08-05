@@ -198,12 +198,18 @@ set_env_value() {
 
     mkdir -p "$(dirname "${file}")"
     [ -f "${file}" ] || touch "${file}"
+
+    if [ ! -s "${file}" ]; then
+        printf '%s=%s\n' "${key}" "${value}" > "${file}"
+        return 0
+    fi
+
     KEY="${key}" VALUE="${value}" perl -0pi -e '
         my $key = $ENV{"KEY"};
         my $value = $ENV{"VALUE"};
         my $line = "$key=$value";
         if (!s/^(\Q$key\E=).*$/$line/m) {
-            s/\z/\n/ unless /\n\z/ || length($_) == 0;
+            s/\z/\n/ unless /\n\z/;
             $_ .= "$line\n";
         }
     ' "${file}"

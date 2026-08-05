@@ -57,7 +57,7 @@ configure_surface_project() {
   if [ "${surface}" = "api" ]; then
     printf 'APP_URL=https://original.example\n' > .env
     printf 'REVERB_APP_KEY=test-key\n' > .ddev/.env
-  else
+  elif [ "${surface}" = "app" ]; then
     printf 'EXISTING_VALUE=preserved\n' > .env.local
   fi
 }
@@ -105,9 +105,9 @@ health_checks() {
     assert_file_contains ".ddev/connections/${surface}" "test-surface-${surface}"
     assert_file_contains "${SURFACE_TEST_ROOT}/${surface}/.ddev/connections/api" "test-surface-api"
     assert_file_contains "${SURFACE_TEST_ROOT}/${surface}/.env.local" "VITE_API_URL=https://test-surface-api-local.ddev.site"
-    assert_file_contains "${SURFACE_TEST_ROOT}/${surface}/.env.local" "EXISTING_VALUE=preserved"
   done
 
+  assert_file_contains "${SURFACE_TEST_ROOT}/app/.env.local" "EXISTING_VALUE=preserved"
   assert_file_contains ".env" "APP_URL=https://test-surface-app-local.ddev.site"
   assert_file_contains "${SURFACE_TEST_ROOT}/app/.env.local" "VITE_REVERB_HOST=test-surface-api-local.ddev.site"
   assert_file_contains "${SURFACE_TEST_ROOT}/app/.env.local" "VITE_REVERB_PORT=8880"
