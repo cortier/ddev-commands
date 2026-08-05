@@ -13,6 +13,7 @@ setup() {
   export DIR="$(cd "$(dirname "${BATS_TEST_FILENAME}")/.." >/dev/null 2>&1 && pwd)"
   export PROJNAME="test-ddev-commands-api"
   export TESTDIR="$(mktemp -d)"
+  export SURFACE_TEST_ROOT="$(mktemp -d)"
   export DDEV_NONINTERACTIVE=true
   export DDEV_NO_INSTRUMENTATION=true
 
@@ -29,11 +30,35 @@ teardown() {
   set -eu -o pipefail
 
   ddev delete -Oy "${PROJNAME}" >/dev/null 2>&1 || true
+  for surface in api app admin shop; do
+    ddev delete -Oy "test-surface-${surface}" >/dev/null 2>&1 || true
+  done
 
   if [ -n "${GITHUB_ENV:-}" ]; then
     [ -e "${GITHUB_ENV}" ] && echo "TESTDIR=${TESTDIR}" >> "${GITHUB_ENV}"
   else
     rm -rf "${TESTDIR}"
+    rm -rf "${SURFACE_TEST_ROOT}"
+  fi
+}
+
+configure_surface_project() {
+  local surface="$1"
+  local type="generic"
+  local project_directory="${SURFACE_TEST_ROOT}/${surface}"
+
+  [ "${surface}" != "api" ] || type="laravel"
+  mkdir -p "${project_directory}"
+  cd "${project_directory}"
+  ddev config --project-name="test-surface-${surface}" --project-type="${type}" --project-tld=ddev.site
+  printf 'additional_hostnames:\n    - test-surface-%s-local\n' "${surface}" > .ddev/config.host.local.yaml
+  ddev add-on get "${DIR}"
+
+  if [ "${surface}" = "api" ]; then
+    printf 'APP_URL=https://original.example\n' > .env
+    printf 'REVERB_APP_KEY=test-key\n' > .ddev/.env
+  else
+    printf 'EXISTING_VALUE=preserved\n' > .env.local
   fi
 }
 
@@ -50,11 +75,15 @@ health_checks() {
   assert_success
   assert_output --partial "Open the local project URL"
 
-  for command in api app launch name surface url; do
+  for command in admin api app launch name shop surface url; do
     assert_file_executable ".ddev/commands/host/${command}"
     run bash -n ".ddev/commands/host/${command}"
     assert_success
   done
+
+  assert_file_exist ".ddev/config.ddev-commands.yaml"
+  run grep -F "ddev surface auto-connect || true" ".ddev/config.ddev-commands.yaml"
+  assert_success
 }
 
 @test "install from directory" {
@@ -62,6 +91,56 @@ health_checks() {
   assert_success
 
   health_checks
+}
+
+@test "connects one API to each frontend and validates reciprocal roles" {
+  for surface in api app admin shop; do
+    configure_surface_project "${surface}"
+  done
+
+  cd "${SURFACE_TEST_ROOT}/api"
+  for surface in app admin shop; do
+    run ddev "${surface}" connect test-surface
+    assert_success
+    assert_file_contains ".ddev/connections/${surface}" "test-surface-${surface}"
+    assert_file_contains "${SURFACE_TEST_ROOT}/${surface}/.ddev/connections/api" "test-surface-api"
+    assert_file_contains "${SURFACE_TEST_ROOT}/${surface}/.env.local" "VITE_API_URL=https://test-surface-api-local.ddev.site"
+    assert_file_contains "${SURFACE_TEST_ROOT}/${surface}/.env.local" "EXISTING_VALUE=preserved"
+  done
+
+  assert_file_contains ".env" "APP_URL=https://test-surface-app-local.ddev.site"
+  assert_file_contains "${SURFACE_TEST_ROOT}/app/.env.local" "VITE_REVERB_HOST=test-surface-api-local.ddev.site"
+  assert_file_contains "${SURFACE_TEST_ROOT}/app/.env.local" "VITE_REVERB_PORT=8880"
+  assert_file_contains "${SURFACE_TEST_ROOT}/app/.env.local" "VITE_REVERB_SCHEME=https"
+  assert_file_contains "${SURFACE_TEST_ROOT}/app/.env.local" "VITE_REVERB_APP_KEY=test-key"
+
+  cd "${SURFACE_TEST_ROOT}/app"
+  run ddev shop connect test-surface
+  assert_failure
+  assert_output --partial "Connections from app to shop are not allowed."
+
+  rm .ddev/connections/api
+  cd "${SURFACE_TEST_ROOT}/api"
+  run ddev app describe
+  assert_failure
+  assert_output --partial "is not reciprocal"
+}
+
+@test "auto-connect creates independent frontend placeholders" {
+  cd "${SURFACE_TEST_ROOT}"
+  mkdir auto
+  cd auto
+  ddev config --project-name="isolated-api" --project-type=laravel --project-tld=ddev.site
+  printf 'additional_hostnames:\n    - isolated-api-local\n' > .ddev/config.host.local.yaml
+  ddev add-on get "${DIR}"
+
+  run ddev surface auto-connect
+  assert_success
+  assert_file_contains ".ddev/connections/app" "isolated-app"
+  assert_file_contains ".ddev/connections/admin" "isolated-admin"
+  assert_file_contains ".ddev/connections/shop" "isolated-shop"
+
+  ddev delete -Oy isolated-api >/dev/null 2>&1 || true
 }
 
 # bats test_tags=release

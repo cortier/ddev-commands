@@ -3,9 +3,9 @@
 #ddev-generated
 
 ## Description: Shared interface for application surface DDEV project interactions
-## Usage: surface <api|app|auto-connect> [connect|ddev-command] [args...]
+## Usage: surface <api|app|admin|shop|auto-connect> [connect|ddev-command] [args...]
 ## Example: "ddev surface api connect cobrofacil"
-## Example: "ddev surface app describe"
+## Example: "ddev surface shop describe"
 
 set -euo pipefail
 
@@ -16,22 +16,21 @@ if [ "${command_name}" = "surface" ]; then
     relation="${1:-}"
 
     case "${relation}" in
-        api|app)
+        api|app|admin|shop)
             shift
             ;;
         auto-connect)
             ;;
         *)
-            printf '\033[31m%s\033[0m\n' "Usage: ddev surface <api|app|auto-connect> <connect|ddev-command> [args...]" >&2
+            printf '\033[31m%s\033[0m\n' "Usage: ddev surface <api|app|admin|shop|auto-connect> <connect|ddev-command> [args...]" >&2
             exit 1
             ;;
     esac
 else
     relation="${CONNECTION_COMMAND_NAME:-${command_name}}"
 fi
+
 connection_directory_name=".ddev/connections"
-connection_directory="${app_root}/${connection_directory_name}"
-connection_file="${connection_directory}/${relation}"
 
 usage() {
     cat >&2 <<USAGE
@@ -42,12 +41,8 @@ Usage:
 USAGE
 }
 
-red() {
-    printf '\033[31m%s\033[0m\n' "$1" >&2
-}
-
 fail() {
-    red "$1"
+    printf '\033[31m%s\033[0m\n' "$1" >&2
     exit 1
 }
 
@@ -55,85 +50,87 @@ require_jq() {
     command -v jq >/dev/null 2>&1 || fail "The ${relation} command requires jq to parse DDEV metadata."
 }
 
-opposite_relation() {
-    case "${relation}" in
-        api)
-            echo "app"
-            ;;
-        app)
-            echo "api"
-            ;;
-        *)
-            fail "Unsupported connection type '${relation}'."
-            ;;
+is_frontend_role() {
+    case "$1" in
+        app|admin|shop) return 0 ;;
+        *) return 1 ;;
     esac
 }
 
-expected_type() {
-    case "$1" in
-        api)
-            echo "laravel"
-            ;;
-        app)
-            echo "generic"
-            ;;
-        *)
-            fail "Unsupported connection type '$1'."
-            ;;
+project_role() {
+    local project="$1"
+    local type="$2"
+
+    case "${project}:${type}" in
+        *-api:laravel) echo "api" ;;
+        *-app:generic) echo "app" ;;
+        *-admin:generic) echo "admin" ;;
+        *-shop:generic) echo "shop" ;;
     esac
+}
+
+project_base_name() {
+    local project="$1"
+    local role="$2"
+    echo "${project%-"${role}"}"
+}
+
+validate_pairing() {
+    local local_role="$1"
+    local target_role="$2"
+
+    if [ "${local_role}" = "api" ] && is_frontend_role "${target_role}"; then
+        return 0
+    fi
+
+    if is_frontend_role "${local_role}" && [ "${target_role}" = "api" ]; then
+        return 0
+    fi
+
+    fail "Connections from ${local_role} to ${target_role} are not allowed."
 }
 
 normalize_project() {
     local project="$1"
 
-    case "${relation}" in
-        api)
-            if [[ "${project}" == *-api ]]; then
-                echo "${project}"
-            else
-                echo "${project}-api"
-            fi
-            ;;
-        app)
-            if [[ "${project}" == *-app ]]; then
-                echo "${project}"
-            else
-                echo "${project}-app"
-            fi
-            ;;
-        *)
-            fail "Unsupported connection type '${relation}'."
-            ;;
-    esac
+    if [[ "${project}" == *-"${relation}" ]]; then
+        echo "${project}"
+    else
+        echo "${project}-${relation}"
+    fi
+}
+
+connection_file_for() {
+    local approot="$1"
+    local connection_name="$2"
+    echo "${approot}/${connection_directory_name}/${connection_name}"
+}
+
+read_connection() {
+    local approot="$1"
+    local connection_name="$2"
+    local connection_file
+
+    connection_file="$(connection_file_for "${approot}" "${connection_name}")"
+    [ -f "${connection_file}" ] || return 0
+    sed -n '1s/[[:space:]]*$//p' "${connection_file}"
 }
 
 connected_project() {
-    if [ ! -f "${connection_file}" ]; then
-        fail "A ${relation} has not been connected."
-    fi
-
     local project
-    project="$(sed -n '1s/[[:space:]]*$//p' "${connection_file}")"
-
-    if [ -z "${project}" ]; then
-        fail "A ${relation} has not been connected."
-    fi
-
+    project="$(read_connection "${app_root}" "${relation}")"
+    [ -n "${project}" ] || fail "A ${relation} has not been connected."
     echo "${project}"
 }
 
 describe_project() {
     local project="$1"
-
     ddev describe "${project}" --json-output 2>/dev/null || fail "DDEV project '${project}' was not found or cannot be described."
 }
 
 project_approot_from_list() {
     local project="$1"
-
-    ddev list --json-output \
-        | jq -r --arg project "${project}" '.raw[]? | select(.name == $project) | .approot' \
-        | sed -n '1p'
+    ddev list --json-output | jq -r --arg project "${project}" '.raw[]? | select(.name == $project) | .approot' | sed -n '1p'
 }
 
 project_approot() {
@@ -142,26 +139,13 @@ project_approot() {
     local approot
 
     approot="$(project_approot_from_list "${project}")"
-
-    if [ -z "${approot}" ]; then
-        approot="$(jq -r '.raw.approot // empty' <<< "${describe_json}")"
-    fi
-
+    [ -n "${approot}" ] || approot="$(jq -r '.raw.approot // empty' <<< "${describe_json}")"
     [ -n "${approot}" ] || fail "Could not resolve the app root for DDEV project '${project}'."
-
     echo "${approot}"
 }
 
-current_project_name() {
-    cd "${app_root}" && ddev describe --json-output | jq -r '.raw.name // empty'
-}
-
-current_project_type() {
-    cd "${app_root}" && ddev describe --json-output | jq -r '.raw.type // empty'
-}
-
-default_project_name() {
-    DDEV_APPROOT="${app_root}" "${app_root}/.ddev/commands/host/name"
+current_project_json() {
+    cd "${app_root}" && ddev describe --json-output
 }
 
 project_url() {
@@ -170,64 +154,41 @@ project_url() {
     local url
 
     url="$(cd "${approot}" && ddev url | awk 'NF { print; exit }')"
-
     [ -n "${url}" ] || fail "${connection_name^} ddev url did not return a URL."
-
     echo "${url}"
 }
 
 url_host() {
     local url="$1"
-    local host
-
-    host="${url#*://}"
+    local host="${url#*://}"
     host="${host%%/*}"
     host="${host%%:*}"
-
     [ -n "${host}" ] || fail "Could not extract a host from URL '${url}'."
-
     echo "${host}"
+}
+
+url_scheme() {
+    local url="$1"
+    echo "${url%%://*}"
 }
 
 reverb_port() {
     local api_approot="$1"
     local port
 
-    port="$(
-        awk '
-            /^[[:space:]]*-[[:space:]]*name:[[:space:]]*reverb[[:space:]]*$/ {
-                in_reverb = 1
-                next
-            }
-
-            in_reverb && /^[[:space:]]*-[[:space:]]*name:/ {
-                in_reverb = 0
-            }
-
-            in_reverb && /^[[:space:]]*https_port:/ {
-                print $2
-                exit
-            }
-        ' "${api_approot}"/.ddev/config*.yaml 2>/dev/null || true
-    )"
-
+    port="$(awk '
+        /^[[:space:]]*-[[:space:]]*name:[[:space:]]*reverb[[:space:]]*$/ { in_reverb = 1; next }
+        in_reverb && /^[[:space:]]*-[[:space:]]*name:/ { in_reverb = 0 }
+        in_reverb && /^[[:space:]]*https_port:/ { print $2; exit }
+    ' "${api_approot}"/.ddev/config*.yaml 2>/dev/null || true)"
     echo "${port:-8880}"
 }
 
 env_value() {
     local file="$1"
     local key="$2"
-
-    awk -F= -v key="${key}" '
-        $1 == key {
-            value = substr($0, length(key) + 2)
-            gsub(/\r$/, "", value)
-            gsub(/^'\''|'\''$/, "", value)
-            gsub(/^"|"$/, "", value)
-            print value
-            exit
-        }
-    ' "${file}"
+    [ -f "${file}" ] || return 0
+    awk -F= -v key="${key}" '$1 == key { value = substr($0, length(key) + 2); gsub(/\r$/, "", value); gsub(/^\047|\047$/, "", value); gsub(/^"|"$/, "", value); print value; exit }' "${file}"
 }
 
 set_env_value() {
@@ -235,72 +196,35 @@ set_env_value() {
     local key="$2"
     local value="$3"
 
-    [ -f "${file}" ] || fail "Environment file was not found at ${file}."
-
+    mkdir -p "$(dirname "${file}")"
+    [ -f "${file}" ] || touch "${file}"
     KEY="${key}" VALUE="${value}" perl -0pi -e '
         my $key = $ENV{"KEY"};
         my $value = $ENV{"VALUE"};
         my $line = "$key=$value";
-
         if (!s/^(\Q$key\E=).*$/$line/m) {
-            s/\z/\n/ unless /\n\z/;
+            s/\z/\n/ unless /\n\z/ || length($_) == 0;
             $_ .= "$line\n";
         }
     ' "${file}"
 }
 
-pusher_key() {
-    local api_approot="$1"
-
-    env_value "${api_approot}/.ddev/.env" "REVERB_APP_KEY"
-}
-
-update_app_environment() {
-    local app_approot="$1"
-    local api_approot="$2"
-    local environment_file="${app_approot}/src/environments/environment.ts"
+update_frontend_environment() {
+    local frontend_approot="$1"
+    local frontend_role="$2"
+    local api_approot="$3"
+    local environment_file="${frontend_approot}/.env.local"
     local api_url
-    local ws_host
-    local ws_port
-    local key
-
-    [ -f "${environment_file}" ] || return 0
 
     api_url="$(project_url "${api_approot}" "api")"
-    ws_host="$(url_host "${api_url}")"
-    ws_port="$(reverb_port "${api_approot}")"
-    key="$(pusher_key "${api_approot}")"
+    set_env_value "${environment_file}" "VITE_API_URL" "${api_url}"
 
-    API_URL="${api_url}" WS_HOST="${ws_host}" WS_PORT="${ws_port}" PUSHER_KEY="${key}" perl -0pi -e '
-        my $api_url = $ENV{"API_URL"};
-        my $ws_host = $ENV{"WS_HOST"};
-        my $ws_port = $ENV{"WS_PORT"};
-        my $pusher_key = $ENV{"PUSHER_KEY"};
-
-        s/(apiUrl:\s*'\'')[^'\'']*('\'')/${1}${api_url}${2}/s
-            or die "Could not update apiUrl in environment.ts\n";
-
-        s{(pusher:\s*\{)(.*?)(\n\s*\})}{
-            my ($start, $block, $end) = ($1, $2, $3);
-
-            if ($block =~ /wsHost:/) {
-                $block =~ s|(wsHost:\s*'\'')[^'\'']*('\'')|${1}${ws_host}${2}|s;
-            } else {
-                $block =~ s|(\n\s*key:)|\n        wsHost: '\''${ws_host}'\'',$1|s;
-            }
-
-            if ($block =~ /wsPort:/) {
-                $block =~ s|(wsPort:\s*)[0-9]+|${1}${ws_port}|s;
-            } elsif ($block =~ /wsHost:/) {
-                $block =~ s|(\n\s*wsHost:\s*'\''[^'\'']*'\'',)|$1\n        wsPort: ${ws_port},|s;
-            }
-
-            $block =~ s|(key:\s*'\'')[^'\'']*('\'')|${1}${pusher_key}${2}|s
-                or die "Could not update pusher key in environment.ts\n";
-
-            "${start}${block}${end}";
-        }se or die "Could not update pusher configuration in environment.ts\n";
-    ' "${environment_file}"
+    if [ "${frontend_role}" = "app" ]; then
+        set_env_value "${environment_file}" "VITE_REVERB_HOST" "$(url_host "${api_url}")"
+        set_env_value "${environment_file}" "VITE_REVERB_PORT" "$(reverb_port "${api_approot}")"
+        set_env_value "${environment_file}" "VITE_REVERB_SCHEME" "$(url_scheme "${api_url}")"
+        set_env_value "${environment_file}" "VITE_REVERB_APP_KEY" "$(env_value "${api_approot}/.ddev/.env" "REVERB_APP_KEY")"
+    fi
 
     echo "Updated ${environment_file}."
 }
@@ -309,28 +233,31 @@ update_api_environment() {
     local api_approot="$1"
     local app_approot="$2"
     local environment_file="${api_approot}/.env"
-    local app_url
-
-    app_url="$(project_url "${app_approot}" "app")"
-    set_env_value "${environment_file}" "APP_URL" "${app_url}"
-
+    set_env_value "${environment_file}" "APP_URL" "$(project_url "${app_approot}" "app")"
     echo "Updated ${environment_file}."
 }
 
 run_connection_hooks() {
     local local_approot="$1"
-    local target_approot="$2"
+    local local_role="$2"
+    local target_approot="$3"
+    local target_role="$4"
+    local api_approot
+    local frontend_approot
+    local frontend_role
 
-    case "${relation}" in
-        api)
-            update_app_environment "${local_approot}" "${target_approot}"
-            update_api_environment "${target_approot}" "${local_approot}"
-            ;;
-        app)
-            update_app_environment "${target_approot}" "${local_approot}"
-            update_api_environment "${local_approot}" "${target_approot}"
-            ;;
-    esac
+    if [ "${local_role}" = "api" ]; then
+        api_approot="${local_approot}"
+        frontend_approot="${target_approot}"
+        frontend_role="${target_role}"
+    else
+        api_approot="${target_approot}"
+        frontend_approot="${local_approot}"
+        frontend_role="${local_role}"
+    fi
+
+    update_frontend_environment "${frontend_approot}" "${frontend_role}" "${api_approot}"
+    [ "${frontend_role}" != "app" ] || update_api_environment "${api_approot}" "${frontend_approot}"
 }
 
 write_connection() {
@@ -338,7 +265,6 @@ write_connection() {
     local connection_name="$2"
     local project="$3"
     local directory="${approot}/${connection_directory_name}"
-
     mkdir -p "${directory}"
     printf '%s\n' "${project}" > "${directory}/${connection_name}"
 }
@@ -348,17 +274,12 @@ remove_connection_if_points_to() {
     local connection_name="$2"
     local expected_project="$3"
     local owner_project="$4"
-    local connection_file="${approot}/${connection_directory_name}/${connection_name}"
-    local connected_project
+    local connection_file
 
-    [ -f "${connection_file}" ] || return 0
-
-    connected_project="$(sed -n '1s/[[:space:]]*$//p' "${connection_file}")"
-
-    if [ "${connected_project}" = "${expected_project}" ]; then
-        rm "${connection_file}"
-        echo "Disconnected ${connection_name} project '${expected_project}' in ${owner_project}."
-    fi
+    connection_file="$(connection_file_for "${approot}" "${connection_name}")"
+    [ "$(read_connection "${approot}" "${connection_name}")" = "${expected_project}" ] || return 0
+    rm "${connection_file}"
+    echo "Disconnected ${connection_name} project '${expected_project}' in ${owner_project}."
 }
 
 remove_reciprocal_connection() {
@@ -368,12 +289,10 @@ remove_reciprocal_connection() {
     local old_approot
 
     old_approot="$(project_approot_from_list "${old_project}")"
-
     if [ -z "${old_approot}" ]; then
         echo "Skipped stale ${connection_name} cleanup because DDEV project '${old_project}' is unavailable."
         return 0
     fi
-
     remove_connection_if_points_to "${old_approot}" "${connection_name}" "${expected_project}" "${old_project}"
 }
 
@@ -383,214 +302,141 @@ disconnect_existing_connection() {
     local project="$3"
     local reciprocal_connection_name="$4"
     local expected_project="$5"
-    local existing_connection_file="${approot}/${connection_directory_name}/${connection_name}"
     local existing_project
 
-    [ -f "${existing_connection_file}" ] || return 0
-
-    existing_project="$(sed -n '1s/[[:space:]]*$//p' "${existing_connection_file}")"
-
+    existing_project="$(read_connection "${approot}" "${connection_name}")"
     if [ -n "${existing_project}" ] && [ "${existing_project}" != "${project}" ]; then
         remove_reciprocal_connection "${existing_project}" "${reciprocal_connection_name}" "${expected_project}"
     fi
 }
 
-run_local_connection_hooks() {
-    local local_approot="$1"
-    local target_approot="$2"
-
-    case "${relation}" in
-        api)
-            update_app_environment "${local_approot}" "${target_approot}"
-            ;;
-        app)
-            update_api_environment "${local_approot}" "${target_approot}"
-            ;;
-    esac
-}
-
 connect_project() {
-    [ "$#" -ge 1 ] && [ "$#" -le 2 ] || {
-        usage
-        exit 1
-    }
-
+    [ "$#" -ge 1 ] && [ "$#" -le 2 ] || { usage; exit 1; }
     require_jq
 
     local mode="${2:-reciprocal}"
-    local target_project
-    local target_describe_json
-    local target_type
-    local target_approot
-    local local_project
-    local local_type
-    local reciprocal_relation
-    local expected_target_type
-    local expected_local_type
+    local target_project target_json target_type target_role target_approot
+    local local_json local_project local_type local_role
 
-    case "${mode}" in
-        reciprocal|one-way)
-            ;;
-        *)
-            fail "Unsupported connection mode '${mode}'."
-            ;;
-    esac
+    case "${mode}" in reciprocal|one-way) ;; *) fail "Unsupported connection mode '${mode}'." ;; esac
 
     target_project="$(normalize_project "$1")"
-    target_describe_json="$(describe_project "${target_project}")"
-    target_type="$(jq -r '.raw.type // empty' <<< "${target_describe_json}")"
-    expected_target_type="$(expected_type "${relation}")"
-    reciprocal_relation="$(opposite_relation)"
-    expected_local_type="$(expected_type "${reciprocal_relation}")"
+    target_json="$(describe_project "${target_project}")"
+    target_type="$(jq -r '.raw.type // empty' <<< "${target_json}")"
+    target_role="$(project_role "${target_project}" "${target_type}")"
+    [ "${target_role}" = "${relation}" ] || fail "DDEV project '${target_project}' is not a ${relation} project."
 
-    [ "${target_type}" = "${expected_target_type}" ] || fail "DDEV project '${target_project}' is not a ${relation} project."
+    local_json="$(current_project_json)"
+    local_project="$(jq -r '.raw.name // empty' <<< "${local_json}")"
+    local_type="$(jq -r '.raw.type // empty' <<< "${local_json}")"
+    local_role="$(project_role "${local_project}" "${local_type}")"
+    [ -n "${local_role}" ] || fail "The current DDEV project does not have a supported surface role."
+    validate_pairing "${local_role}" "${target_role}"
 
-    target_approot="$(project_approot "${target_project}" "${target_describe_json}")"
-    local_project="$(current_project_name)"
-    local_type="$(current_project_type)"
-
-    [ -n "${local_project}" ] || fail "Could not resolve the current DDEV project name."
-    [ "${local_type}" = "${expected_local_type}" ] || fail "The current DDEV project is not a ${reciprocal_relation} project."
-
-    disconnect_existing_connection "${app_root}" "${relation}" "${target_project}" "${reciprocal_relation}" "${local_project}"
+    target_approot="$(project_approot "${target_project}" "${target_json}")"
+    disconnect_existing_connection "${app_root}" "${relation}" "${target_project}" "${local_role}" "${local_project}"
     write_connection "${app_root}" "${relation}" "${target_project}"
-
     echo "Connected ${relation} project '${target_project}'."
 
     if [ "${mode}" = "one-way" ]; then
-        remove_connection_if_points_to "${target_approot}" "${reciprocal_relation}" "${local_project}" "${target_project}"
-        run_local_connection_hooks "${app_root}" "${target_approot}"
+        remove_connection_if_points_to "${target_approot}" "${local_role}" "${local_project}" "${target_project}"
         return 0
     fi
 
-    disconnect_existing_connection "${target_approot}" "${reciprocal_relation}" "${local_project}" "${relation}" "${target_project}"
-    write_connection "${target_approot}" "${reciprocal_relation}" "${local_project}"
-    run_connection_hooks "${app_root}" "${target_approot}"
-
-    echo "Connected ${reciprocal_relation} project '${local_project}' in ${target_project}."
+    disconnect_existing_connection "${target_approot}" "${local_role}" "${local_project}" "${target_role}" "${target_project}"
+    write_connection "${target_approot}" "${local_role}" "${local_project}"
+    run_connection_hooks "${app_root}" "${local_role}" "${target_approot}" "${target_role}"
+    echo "Connected ${local_role} project '${local_project}' in ${target_project}."
 }
 
-project_relation() {
-    local project="$1"
-    local type="$2"
-
-    case "${project}:${type}" in
-        *-api:laravel)
-            echo "api"
-            ;;
-        *-app:generic)
-            echo "app"
-            ;;
-    esac
+write_placeholder_connection() {
+    local target_role="$1"
+    local target_project="$2"
+    write_connection "${app_root}" "${target_role}" "${target_project}"
+    echo "No ${target_role} project found. Falling back to '${target_project}'."
 }
 
-project_base_name() {
-    local project="$1"
-    local project_relation="$2"
+auto_connect_relation() {
+    local local_project="$1"
+    local local_role="$2"
+    local project_base="$3"
+    local target_role="$4"
+    local saved_project target_project target_type target_role_found
 
-    case "${project_relation}" in
-        api)
-            echo "${project%-api}"
-            ;;
-        app)
-            echo "${project%-app}"
-            ;;
-        *)
-            fail "Unsupported connection type '${project_relation}'."
-            ;;
-    esac
+    relation="${target_role}"
+    saved_project="$(read_connection "${app_root}" "${target_role}")"
+
+    if [ -n "${saved_project}" ]; then
+        target_type="$(ddev describe "${saved_project}" --json-output 2>/dev/null | jq -r '.raw.type // empty' || true)"
+        target_role_found="$(project_role "${saved_project}" "${target_type}")"
+        if [ "${target_role_found}" = "${target_role}" ]; then
+            connect_project "${saved_project}"
+            return 0
+        fi
+    fi
+
+    target_project="${project_base}-${target_role}"
+    target_type="$(ddev list --json-output | jq -r --arg project "${target_project}" '.raw[]? | select(.name == $project) | .type' | sed -n '1p')"
+    target_role_found="$(project_role "${target_project}" "${target_type}")"
+
+    if [ "${target_role_found}" = "${target_role}" ]; then
+        connect_project "${target_project}"
+    else
+        write_placeholder_connection "${target_role}" "${target_project}"
+    fi
 }
 
 auto_connect_project() {
-    [ "$#" -eq 0 ] || {
-        usage
-        exit 1
-    }
-
+    [ "$#" -eq 0 ] || { usage; exit 1; }
     require_jq
 
-    local local_project
-    local local_type
-    local local_relation
-    local project_base
-    local reciprocal_relation
-    local reciprocal_type
-    local target_project
-    local default_project
-    local connection_mode="reciprocal"
+    local local_json local_project local_type local_role project_base target_role
+    local_json="$(current_project_json)"
+    local_project="$(jq -r '.raw.name // empty' <<< "${local_json}")"
+    local_type="$(jq -r '.raw.type // empty' <<< "${local_json}")"
+    local_role="$(project_role "${local_project}" "${local_type}")"
+    [ -n "${local_role}" ] || fail "The current DDEV project does not have a supported surface role."
+    project_base="$(project_base_name "${local_project}" "${local_role}")"
 
-    local_project="$(current_project_name)"
-    local_type="$(current_project_type)"
-    local_relation="$(project_relation "${local_project}" "${local_type}")"
-
-    [ -n "${local_project}" ] || fail "Could not resolve the current DDEV project name."
-    [ -n "${local_relation}" ] || fail "The current DDEV project is not an api or app project."
-
-    relation="${local_relation}"
-    project_base="$(project_base_name "${local_project}" "${local_relation}")"
-    reciprocal_relation="$(opposite_relation)"
-    reciprocal_type="$(expected_type "${reciprocal_relation}")"
-
-    target_project="$(
-        ddev list --json-output \
-            | jq -r \
-                --arg local_project "${local_project}" \
-                --arg project_base "${project_base}" \
-                --arg reciprocal_type "${reciprocal_type}" \
-                '.raw[]?
-                    | select(.name != $local_project)
-                    | select(.name | startswith($project_base))
-                    | select(.type == $reciprocal_type)
-                    | .name' \
-            | sort \
-            | sed -n '1p'
-    )"
-
-    if [ -z "${target_project}" ]; then
-        default_project="$(default_project_name)"
-        target_project="${default_project}-${reciprocal_relation}"
-        connection_mode="one-way"
-        echo "No ${reciprocal_relation} project found for '${local_project}'. Falling back to '${target_project}'."
+    if [ "${local_role}" = "api" ]; then
+        for target_role in app admin shop; do
+            auto_connect_relation "${local_project}" "${local_role}" "${project_base}" "${target_role}"
+        done
+    else
+        auto_connect_relation "${local_project}" "${local_role}" "${project_base}" "api"
     fi
-
-    relation="${reciprocal_relation}" connect_project "${target_project}" "${connection_mode}"
 }
 
 forward_to_connected_project() {
     require_jq
-
-    local project
-    local describe_json
-    local approot
+    local project target_json target_type target_role target_approot
+    local local_json local_project local_type local_role reciprocal_project
 
     project="$(connected_project)"
-    describe_json="$(describe_project "${project}")"
-    approot="$(project_approot "${project}" "${describe_json}")"
+    target_json="$(describe_project "${project}")"
+    target_type="$(jq -r '.raw.type // empty' <<< "${target_json}")"
+    target_role="$(project_role "${project}" "${target_type}")"
+    [ "${target_role}" = "${relation}" ] || fail "Connected DDEV project '${project}' is not a ${relation} project."
 
-    cd "${approot}"
+    local_json="$(current_project_json)"
+    local_project="$(jq -r '.raw.name // empty' <<< "${local_json}")"
+    local_type="$(jq -r '.raw.type // empty' <<< "${local_json}")"
+    local_role="$(project_role "${local_project}" "${local_type}")"
+    [ -n "${local_role}" ] || fail "The current DDEV project does not have a supported surface role."
+    validate_pairing "${local_role}" "${target_role}"
+
+    target_approot="$(project_approot "${project}" "${target_json}")"
+    reciprocal_project="$(read_connection "${target_approot}" "${local_role}")"
+    [ "${reciprocal_project}" = "${local_project}" ] || fail "The ${relation} connection to '${project}' is not reciprocal. Run 'ddev ${relation} connect ${project}'."
+
+    cd "${target_approot}"
     ddev "$@"
 }
 
-forward_default_describe() {
-    forward_to_connected_project describe "$@"
-}
-
 case "${1:-}" in
-    connect)
-        shift
-        connect_project "$@"
-        ;;
-    auto-connect)
-        shift
-        auto_connect_project "$@"
-        ;;
-    help)
-        usage
-        ;;
-    ""|-*)
-        forward_default_describe "$@"
-        ;;
-    *)
-        forward_to_connected_project "$@"
-        ;;
+    connect) shift; connect_project "$@" ;;
+    auto-connect) shift; auto_connect_project "$@" ;;
+    help) usage ;;
+    ""|-*) forward_to_connected_project describe "$@" ;;
+    *) forward_to_connected_project "$@" ;;
 esac

@@ -10,15 +10,21 @@ This DDEV add-on installs shared host commands used by Cortier projects.
 
 - `ddev api`: Connect to or run a command in an API surface.
 - `ddev app`: Connect to or run a command in an app surface.
+- `ddev admin`: Connect to or run a command in an admin surface.
+- `ddev shop`: Connect to or run a command in a shop surface.
 - `ddev launch`: Open the current project's local URL.
 - `ddev name`: Print the DDEV project name without its final suffix.
-- `ddev surface`: Manage and use API and app surface connections.
+- `ddev surface`: Manage and use API, app, admin, and shop surface connections.
 - `ddev url`: Print URLs from `.ddev/config.host.local.yaml`.
 
 # Requirements
 
-The target project must contain `.ddev/config.host.local.yaml). The `surface`
+The target project must contain `.ddev/config.host.local.yaml`. The `surface`
 command also requires `jq` when it reads DDEV metadata.
+
+API projects can connect to one app, one admin, and one shop. Each frontend can
+connect to one API; frontend-to-frontend connections are rejected. Connections
+are validated by project-name suffix, DDEV type, and reciprocal connection file.
 
 # Installation
 

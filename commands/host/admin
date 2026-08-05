@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+
+#ddev-generated
+
+## Description: Interact with the admin application surface
+## Usage: admin <connect|ddev-command> [args...]
+## Example: "ddev admin connect cobrofacil"
+## Example: "ddev admin describe"
+
+set -euo pipefail
+
+exec "${DDEV_APPROOT}/.ddev/commands/host/surface" admin "$@"
