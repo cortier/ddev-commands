@@ -19,6 +19,20 @@ dependencies: []
 
 pre_install_actions:
   - |
+    #ddev-description:Prepare the project launch command
+    launch_file="${DDEV_APPROOT}/.ddev/commands/host/launch"
+
+    if [ -f "${launch_file}" ]; then
+      if grep -q '^# ddev-commands-managed$' "${launch_file}"; then
+        rm "${launch_file}"
+      elif grep -q '#ddev-generated' "${launch_file}" && grep -q 'base_url="$(ddev url | sed -n '\''1p'\'')"' "${launch_file}"; then
+        rm "${launch_file}"
+      else
+        echo "Refusing to overwrite the project-owned launch command at ${launch_file}." >&2
+        exit 1
+      fi
+    fi
+  - |
     #ddev-description:Create the project URL host configuration
     if [ ! -f "${DDEV_APPROOT}/.ddev/config.host.local.yaml" ]; then
       surface_name="${DDEV_PROJECT##*-}"
@@ -28,6 +42,13 @@ pre_install_actions:
 post_install_actions:
   - chmod +x commands/host/admin commands/host/api commands/host/app commands/host/launch commands/host/name commands/host/shop commands/host/surface commands/host/url
 
-removal_actions: []
+removal_actions:
+  - |
+    #ddev-description:Remove the managed project launch command
+    launch_file="${DDEV_APPROOT}/.ddev/commands/host/launch"
+
+    if [ -f "${launch_file}" ] && grep -q '^# ddev-commands-managed$' "${launch_file}"; then
+      rm "${launch_file}"
+    fi
 
 yaml_read_files: {}

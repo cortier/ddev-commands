@@ -74,6 +74,8 @@ health_checks() {
   run ddev launch --help
   assert_success
   assert_output --partial "Open the local project URL"
+  assert_file_not_contains ".ddev/commands/host/launch" "#ddev-generated"
+  assert_file_contains ".ddev/commands/host/launch" "# ddev-commands-managed"
 
   for command in admin api app launch name shop surface url; do
     assert_file_executable ".ddev/commands/host/${command}"
@@ -91,6 +93,33 @@ health_checks() {
   assert_success
 
   health_checks
+}
+
+@test "project launch command survives refresh and add-on updates" {
+  run ddev add-on get "${DIR}"
+  assert_success
+
+  run ddev start
+  assert_success
+  assert_file_executable ".ddev/commands/host/launch"
+
+  run ddev launch --help
+  assert_success
+  assert_output --partial "Open the local project URL"
+
+  printf '# stale version\n' >> .ddev/commands/host/launch
+  run ddev add-on get "${DIR}"
+  assert_success
+  assert_file_not_contains ".ddev/commands/host/launch" "# stale version"
+}
+
+@test "add-on removal deletes its project-owned launch command" {
+  run ddev add-on get "${DIR}"
+  assert_success
+
+  run ddev add-on remove ddev-commands
+  assert_success
+  assert_file_not_exist ".ddev/commands/host/launch"
 }
 
 @test "connects one API to each frontend and validates reciprocal roles" {

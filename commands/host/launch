@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-#ddev-generated
+# ddev-commands-managed
 
 ## Description: Open the local project URL
 ## Usage: launch [path]
