@@ -31,6 +31,9 @@ ddev path rules
 ```
 
 Add `--json-output` to return the repository name and resolved path as JSON.
+Configured paths must identify the root of a standalone Git checkout, not a
+nested directory or submodule, and its `origin` must identify the matching
+`cortier/<repository>` repository.
 
 API projects can connect to one app, one admin, and one shop. Each frontend can
 connect to one API; frontend-to-frontend connections are rejected. Connections

@@ -93,6 +93,7 @@ health_checks() {
   local repository_directory="${TESTDIR}/rules"
   mkdir -p "${repository_directory}"
   git -C "${repository_directory}" init
+  git -C "${repository_directory}" remote add origin git@github.com:cortier/rules.git
   git config --global cortier.paths.rules "${repository_directory}"
   ddev add-on get "${DIR}"
 
@@ -111,6 +112,18 @@ health_checks() {
   run ddev path rules
   assert_failure
   assert_output --partial "git config --global cortier.paths.rules /absolute/path/to/rules"
+}
+
+@test "rejects a configured path below the repository root" {
+  local repository_directory="${TESTDIR}/rules"
+  mkdir -p "${repository_directory}/nested"
+  git -C "${repository_directory}" init
+  git config --global cortier.paths.rules "${repository_directory}/nested"
+  ddev add-on get "${DIR}"
+
+  run ddev path rules
+  assert_failure
+  assert_output --partial "must be the Git working tree root"
 }
 
 @test "install from directory" {
