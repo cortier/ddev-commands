@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+
+#ddev-generated
+
+## Description: Print the configured path for a Cortier repository
+## Usage: path <repository> [--json-output]
+## Example: "ddev path rules"
+
+set -euo pipefail
+
+usage() {
+    echo "Usage: ddev path <repository> [--json-output]" >&2
+}
+
+fail() {
+    printf '\033[31m%s\033[0m\n' "$1" >&2
+    exit 1
+}
+
+repository=""
+json_output=false
+
+for argument in "$@"; do
+    case "${argument}" in
+        --json-output) json_output=true ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        -*) fail "Unknown option '${argument}'." ;;
+        *)
+            [ -z "${repository}" ] || { usage; exit 1; }
+            repository="${argument}"
+            ;;
+    esac
+done
+
+[ -n "${repository}" ] || { usage; exit 1; }
+[[ "${repository}" =~ ^[a-z0-9][a-z0-9-]*$ ]] || fail "Repository names may contain only lowercase letters, numbers, and hyphens."
+
+config_key="cortier.paths.${repository}"
+repository_path="$(git config --global --get "${config_key}" || true)"
+
+if [ -z "${repository_path}" ]; then
+    fail "No path is configured for '${repository}'. Configure it with: git config --global ${config_key} /absolute/path/to/${repository}"
+fi
+
+[[ "${repository_path}" = /* ]] || fail "The path configured in '${config_key}' must be absolute."
+[ -d "${repository_path}" ] || fail "The path configured in '${config_key}' does not exist or is not a directory: ${repository_path}"
+git -C "${repository_path}" rev-parse --is-inside-work-tree >/dev/null 2>&1 || fail "The path configured in '${config_key}' is not a Git working tree: ${repository_path}"
+
+repository_path="$(cd "${repository_path}" && pwd -P)"
+
+if [ "${json_output}" = true ]; then
+    command -v jq >/dev/null 2>&1 || fail "The path command requires jq for JSON output."
+    jq -n --arg repo "${repository}" --arg path "${repository_path}" '{repo: $repo, path: $path}'
+else
+    echo "${repository_path}"
+fi

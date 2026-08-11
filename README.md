@@ -14,6 +14,7 @@ This DDEV add-on installs shared host commands used by Cortier projects.
 - `ddev shop`: Connect to or run a command in a shop surface.
 - `ddev launch`: Open the current project's local URL.
 - `ddev name`: Print the DDEV project name without its final suffix.
+- `ddev path`: Print the configured absolute path for a Cortier repository.
 - `ddev surface`: Manage and use API, app, admin, and shop surface connections.
 - `ddev url`: Print URLs from `.ddev/config.host.local.yaml`.
 
@@ -21,6 +22,15 @@ This DDEV add-on installs shared host commands used by Cortier projects.
 
 The target project must contain `.ddev/config.host.local.yaml`. The `surface`
 command also requires `jq` when it reads DDEV metadata.
+
+Configure repository paths in global Git configuration. For example:
+
+```bash
+git config --global cortier.paths.rules /absolute/path/to/rules
+ddev path rules
+```
+
+Add `--json-output` to return the repository name and resolved path as JSON.
 
 API projects can connect to one app, one admin, and one shop. Each frontend can
 connect to one API; frontend-to-frontend connections are rejected. Connections

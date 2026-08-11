@@ -16,6 +16,7 @@ setup() {
   export SURFACE_TEST_ROOT="$(mktemp -d)"
   export DDEV_NONINTERACTIVE=true
   export DDEV_NO_INSTRUMENTATION=true
+  export GIT_CONFIG_GLOBAL="${TESTDIR}/gitconfig"
 
   ddev delete -Oy "${PROJNAME}" >/dev/null 2>&1 || true
   cd "${TESTDIR}"
@@ -77,7 +78,7 @@ health_checks() {
   assert_file_not_contains ".ddev/commands/host/launch" "#ddev-generated"
   assert_file_contains ".ddev/commands/host/launch" "# ddev-commands-managed"
 
-  for command in admin api app launch name shop surface url; do
+  for command in admin api app launch name path shop surface url; do
     assert_file_executable ".ddev/commands/host/${command}"
     run bash -n ".ddev/commands/host/${command}"
     assert_success
@@ -86,6 +87,30 @@ health_checks() {
   assert_file_exist ".ddev/config.ddev-commands.yaml"
   run grep -F "ddev surface auto-connect || true" ".ddev/config.ddev-commands.yaml"
   assert_success
+}
+
+@test "resolves configured repository paths" {
+  local repository_directory="${TESTDIR}/rules"
+  mkdir -p "${repository_directory}"
+  git -C "${repository_directory}" init
+  git config --global cortier.paths.rules "${repository_directory}"
+  ddev add-on get "${DIR}"
+
+  run ddev path rules
+  assert_success
+  assert_output "${repository_directory}"
+
+  run ddev path rules --json-output
+  assert_success
+  assert_output "$(jq -n --arg repo rules --arg path "${repository_directory}" '{repo: $repo, path: $path}')"
+}
+
+@test "reports how to configure a missing repository path" {
+  ddev add-on get "${DIR}"
+
+  run ddev path rules
+  assert_failure
+  assert_output --partial "git config --global cortier.paths.rules /absolute/path/to/rules"
 }
 
 @test "install from directory" {

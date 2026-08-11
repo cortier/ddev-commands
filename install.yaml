@@ -6,6 +6,7 @@ project_files:
   - commands/host/app
   - commands/host/launch
   - commands/host/name
+  - commands/host/path
   - commands/host/surface
   - commands/host/shop
   - commands/host/url
@@ -40,7 +41,7 @@ pre_install_actions:
     fi
 
 post_install_actions:
-  - chmod +x commands/host/admin commands/host/api commands/host/app commands/host/launch commands/host/name commands/host/shop commands/host/surface commands/host/url
+  - chmod +x commands/host/admin commands/host/api commands/host/app commands/host/launch commands/host/name commands/host/path commands/host/shop commands/host/surface commands/host/url
 
 removal_actions:
   - |
