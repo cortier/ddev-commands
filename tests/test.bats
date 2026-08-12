@@ -31,7 +31,7 @@ teardown() {
   set -eu -o pipefail
 
   ddev delete -Oy "${PROJNAME}" >/dev/null 2>&1 || true
-  for surface in api app admin shop; do
+  for surface in api app angular admin shop; do
     ddev delete -Oy "test-surface-${surface}" >/dev/null 2>&1 || true
   done
 
@@ -56,10 +56,20 @@ configure_surface_project() {
   ddev add-on get "${DIR}"
 
   if [ "${surface}" = "api" ]; then
-    printf 'APP_URL=https://original.example\n' > .env
+    printf 'API_URL=https://original-api.example\nAPP_URL=https://original-app.example\nAPP_FRONTEND_URL=https://obsolete-app.example\nSHOP_URL=https://original-shop.example\n' > .env
     printf 'REVERB_APP_KEY=test-key\n' > .ddev/.env
   elif [ "${surface}" = "app" ]; then
     printf 'EXISTING_VALUE=preserved\n' > .env.local
+  elif [ "${surface}" = "angular" ]; then
+    mkdir -p src/environments
+    cat > src/environments/environment.ts <<'EOF'
+export const environment = {
+    apiUrl: 'https://original-api.example',
+    pusher: {
+        key: 'original-key',
+    },
+};
+EOF
   fi
 }
 
@@ -78,7 +88,7 @@ health_checks() {
   assert_file_not_contains ".ddev/commands/host/launch" "#ddev-generated"
   assert_file_contains ".ddev/commands/host/launch" "# ddev-commands-managed"
 
-  for command in admin api app launch name path shop surface url; do
+  for command in admin angular api app launch name path shop surface url; do
     assert_file_executable ".ddev/commands/host/${command}"
     run bash -n ".ddev/commands/host/${command}"
     assert_success
@@ -161,7 +171,7 @@ health_checks() {
 }
 
 @test "connects one API to each frontend and validates reciprocal roles" {
-  for surface in api app admin shop; do
+  for surface in api app angular admin shop; do
     configure_surface_project "${surface}"
   done
 
@@ -175,20 +185,35 @@ health_checks() {
   done
 
   assert_file_contains "${SURFACE_TEST_ROOT}/app/.env.local" "EXISTING_VALUE=preserved"
+  assert_file_contains ".env" "API_URL=https://test-surface-api-local.ddev.site"
   assert_file_contains ".env" "APP_URL=https://test-surface-app-local.ddev.site"
+  assert_file_contains ".env" "SHOP_URL=https://test-surface-shop-local.ddev.site"
+  assert_file_not_contains ".env" "APP_FRONTEND_URL="
   assert_file_contains "${SURFACE_TEST_ROOT}/app/.env.local" "VITE_REVERB_HOST=test-surface-api-local.ddev.site"
   assert_file_contains "${SURFACE_TEST_ROOT}/app/.env.local" "VITE_REVERB_PORT=8880"
   assert_file_contains "${SURFACE_TEST_ROOT}/app/.env.local" "VITE_REVERB_SCHEME=https"
   assert_file_contains "${SURFACE_TEST_ROOT}/app/.env.local" "VITE_REVERB_APP_KEY=test-key"
 
-  cd "${SURFACE_TEST_ROOT}/app"
+  run ddev angular connect test-surface
+  assert_success
+  assert_file_not_exist ".ddev/connections/app"
+  assert_file_not_exist "${SURFACE_TEST_ROOT}/app/.ddev/connections/api"
+  assert_file_contains ".ddev/connections/angular" "test-surface-angular"
+  assert_file_contains "${SURFACE_TEST_ROOT}/angular/.ddev/connections/api" "test-surface-api"
+  assert_file_contains ".env" "APP_URL=https://test-surface-angular-local.ddev.site"
+  assert_file_contains "${SURFACE_TEST_ROOT}/angular/src/environments/environment.ts" "apiUrl: 'https://test-surface-api-local.ddev.site'"
+  assert_file_contains "${SURFACE_TEST_ROOT}/angular/src/environments/environment.ts" "wsHost: 'test-surface-api-local.ddev.site'"
+  assert_file_contains "${SURFACE_TEST_ROOT}/angular/src/environments/environment.ts" "wsPort: 8880"
+  assert_file_contains "${SURFACE_TEST_ROOT}/angular/src/environments/environment.ts" "key: 'test-key'"
+
+  cd "${SURFACE_TEST_ROOT}/angular"
   run ddev shop connect test-surface
   assert_failure
-  assert_output --partial "Connections from app to shop are not allowed."
+  assert_output --partial "Connections from angular to shop are not allowed."
 
   rm .ddev/connections/api
   cd "${SURFACE_TEST_ROOT}/api"
-  run ddev app describe
+  run ddev angular describe
   assert_failure
   assert_output --partial "is not reciprocal"
 }
@@ -204,6 +229,7 @@ health_checks() {
   run ddev surface auto-connect
   assert_success
   assert_file_contains ".ddev/connections/app" "isolated-app"
+  assert_file_contains ".ddev/connections/angular" "isolated-angular"
   assert_file_contains ".ddev/connections/admin" "isolated-admin"
   assert_file_contains ".ddev/connections/shop" "isolated-shop"
 

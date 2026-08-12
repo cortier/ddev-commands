@@ -3,7 +3,7 @@
 #ddev-generated
 
 ## Description: Shared interface for application surface DDEV project interactions
-## Usage: surface <api|app|admin|shop|auto-connect> [connect|ddev-command] [args...]
+## Usage: surface <api|app|angular|admin|shop|auto-connect> [connect|ddev-command] [args...]
 ## Example: "ddev surface api connect cobrofacil"
 ## Example: "ddev surface shop describe"
 
@@ -16,13 +16,13 @@ if [ "${command_name}" = "surface" ]; then
     relation="${1:-}"
 
     case "${relation}" in
-        api|app|admin|shop)
+        api|app|angular|admin|shop)
             shift
             ;;
         auto-connect)
             ;;
         *)
-            printf '\033[31m%s\033[0m\n' "Usage: ddev surface <api|app|admin|shop|auto-connect> <connect|ddev-command> [args...]" >&2
+            printf '\033[31m%s\033[0m\n' "Usage: ddev surface <api|app|angular|admin|shop|auto-connect> <connect|ddev-command> [args...]" >&2
             exit 1
             ;;
     esac
@@ -52,7 +52,7 @@ require_jq() {
 
 is_frontend_role() {
     case "$1" in
-        app|admin|shop) return 0 ;;
+        app|angular|admin|shop) return 0 ;;
         *) return 1 ;;
     esac
 }
@@ -64,6 +64,7 @@ project_role() {
     case "${project}:${type}" in
         *-api:laravel) echo "api" ;;
         *-app:generic) echo "app" ;;
+        *-angular:generic) echo "angular" ;;
         *-admin:generic) echo "admin" ;;
         *-shop:generic) echo "shop" ;;
     esac
@@ -215,14 +216,28 @@ set_env_value() {
     ' "${file}"
 }
 
+remove_env_value() {
+    local file="$1"
+    local key="$2"
+
+    [ -f "${file}" ] || return 0
+    KEY="${key}" perl -0pi -e 's/^\Q$ENV{"KEY"}\E=.*\n?//m' "${file}"
+}
+
 update_frontend_environment() {
     local frontend_approot="$1"
     local frontend_role="$2"
     local api_approot="$3"
-    local environment_file="${frontend_approot}/.env.local"
     local api_url
 
     api_url="$(project_url "${api_approot}" "api")"
+
+    if [ "${frontend_role}" = "angular" ]; then
+        update_angular_environment "${frontend_approot}" "${api_approot}" "${api_url}"
+        return 0
+    fi
+
+    local environment_file="${frontend_approot}/.env.local"
     set_env_value "${environment_file}" "VITE_API_URL" "${api_url}"
 
     if [ "${frontend_role}" = "app" ]; then
@@ -235,12 +250,93 @@ update_frontend_environment() {
     echo "Updated ${environment_file}."
 }
 
+update_angular_environment() {
+    local angular_approot="$1"
+    local api_approot="$2"
+    local api_url="$3"
+    local environment_file="${angular_approot}/src/environments/environment.ts"
+    local reverb_host
+    local reverb_port_number
+    local reverb_key
+
+    [ -f "${environment_file}" ] || return 0
+
+    reverb_host="$(url_host "${api_url}")"
+    reverb_port_number="$(reverb_port "${api_approot}")"
+    reverb_key="$(env_value "${api_approot}/.ddev/.env" "REVERB_APP_KEY")"
+
+    API_URL="${api_url}" REVERB_HOST="${reverb_host}" REVERB_PORT="${reverb_port_number}" REVERB_KEY="${reverb_key}" perl -0pi -e '
+        my $api_url = $ENV{"API_URL"};
+        my $reverb_host = $ENV{"REVERB_HOST"};
+        my $reverb_port = $ENV{"REVERB_PORT"};
+        my $reverb_key = $ENV{"REVERB_KEY"};
+
+        s/(apiUrl:\s*'\'')[^'\'']*('\'')/${1}${api_url}${2}/s
+            or die "Could not update apiUrl in environment.ts\n";
+
+        s{(pusher:\s*\{)(.*?)(\n\s*\})}{
+            my ($start, $block, $end) = ($1, $2, $3);
+
+            if ($block =~ /wsHost:/) {
+                $block =~ s|(wsHost:\s*'\'')[^'\'']*('\'')|${1}${reverb_host}${2}|s;
+            } else {
+                $block =~ s|(\n\s*key:)|\n        wsHost: '\''${reverb_host}'\'',$1|s;
+            }
+
+            if ($block =~ /wsPort:/) {
+                $block =~ s|(wsPort:\s*)[0-9]+|${1}${reverb_port}|s;
+            } elsif ($block =~ /wsHost:/) {
+                $block =~ s|(\n\s*wsHost:\s*'\''[^'\'']*'\'',)|$1\n        wsPort: ${reverb_port},|s;
+            }
+
+            $block =~ s|(key:\s*'\'')[^'\'']*('\'')|${1}${reverb_key}${2}|s
+                or die "Could not update pusher key in environment.ts\n";
+
+            "${start}${block}${end}";
+        }se or die "Could not update pusher configuration in environment.ts\n";
+    ' "${environment_file}"
+
+    echo "Updated ${environment_file}."
+}
+
 update_api_environment() {
     local api_approot="$1"
-    local app_approot="$2"
+    local frontend_approot="$2"
+    local frontend_role="$3"
     local environment_file="${api_approot}/.env"
-    set_env_value "${environment_file}" "APP_URL" "$(project_url "${app_approot}" "app")"
+    local frontend_environment_key
+
+    set_env_value "${environment_file}" "API_URL" "$(project_url "${api_approot}" "api")"
+    remove_env_value "${environment_file}" "APP_FRONTEND_URL"
+
+    case "${frontend_role}" in
+        app|angular) frontend_environment_key="APP_URL" ;;
+        shop) frontend_environment_key="SHOP_URL" ;;
+        *) return 0 ;;
+    esac
+
+    set_env_value "${environment_file}" "${frontend_environment_key}" "$(project_url "${frontend_approot}" "${frontend_role}")"
     echo "Updated ${environment_file}."
+}
+
+disconnect_alternative_application() {
+    local api_approot="$1"
+    local api_project="$2"
+    local selected_role="$3"
+    local alternative_role
+    local alternative_project
+
+    case "${selected_role}" in
+        app) alternative_role="angular" ;;
+        angular) alternative_role="app" ;;
+        *) return 0 ;;
+    esac
+
+    alternative_project="$(read_connection "${api_approot}" "${alternative_role}")"
+    [ -n "${alternative_project}" ] || return 0
+
+    remove_reciprocal_connection "${alternative_project}" "api" "${api_project}"
+    remove_connection_if_points_to "${api_approot}" "${alternative_role}" "${alternative_project}" "${api_project}"
 }
 
 run_connection_hooks() {
@@ -263,7 +359,7 @@ run_connection_hooks() {
     fi
 
     update_frontend_environment "${frontend_approot}" "${frontend_role}" "${api_approot}"
-    [ "${frontend_role}" != "app" ] || update_api_environment "${api_approot}" "${frontend_approot}"
+    update_api_environment "${api_approot}" "${frontend_approot}" "${frontend_role}"
 }
 
 write_connection() {
@@ -340,6 +436,13 @@ connect_project() {
     validate_pairing "${local_role}" "${target_role}"
 
     target_approot="$(project_approot "${target_project}" "${target_json}")"
+
+    if [ "${local_role}" = "api" ]; then
+        disconnect_alternative_application "${app_root}" "${local_project}" "${target_role}"
+    elif [ "${target_role}" = "api" ]; then
+        disconnect_alternative_application "${target_approot}" "${target_project}" "${local_role}"
+    fi
+
     disconnect_existing_connection "${app_root}" "${relation}" "${target_project}" "${local_role}" "${local_project}"
     write_connection "${app_root}" "${relation}" "${target_project}"
     echo "Connected ${relation} project '${target_project}'."
@@ -405,7 +508,7 @@ auto_connect_project() {
     project_base="$(project_base_name "${local_project}" "${local_role}")"
 
     if [ "${local_role}" = "api" ]; then
-        for target_role in app admin shop; do
+        for target_role in app angular admin shop; do
             auto_connect_relation "${local_project}" "${local_role}" "${project_base}" "${target_role}"
         done
     else

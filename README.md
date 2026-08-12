@@ -10,6 +10,7 @@ This DDEV add-on installs shared host commands used by Cortier projects.
 
 - `ddev api`: Connect to or run a command in an API surface.
 - `ddev app`: Connect to or run a command in an app surface.
+- `ddev angular`: Connect to or run a command in the legacy Angular surface.
 - `ddev admin`: Connect to or run a command in an admin surface.
 - `ddev shop`: Connect to or run a command in a shop surface.
 - `ddev launch`: Open the current project's local URL.
@@ -35,8 +36,10 @@ Configured paths must identify the root of a standalone Git checkout, not a
 nested directory or submodule, and its `origin` must identify the matching
 `cortier/<repository>` repository.
 
-API projects can connect to one app, one admin, and one shop. Each frontend can
-connect to one API; frontend-to-frontend connections are rejected. Connections
+API projects can connect to either one app or one legacy Angular frontend, plus
+one admin and one shop. Each frontend can connect to one API; app and Angular
+connections replace one another, and frontend-to-frontend connections are
+rejected. Connections
 are validated by project-name suffix, DDEV type, and reciprocal connection file.
 
 # Installation
